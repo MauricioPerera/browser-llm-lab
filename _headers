@@ -10,12 +10,14 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
-# Long cache for static assets (busted by content hash on next deploy)
+# Short cache for unbusted assets (no content-hash filenames yet).
+# Cloudflare also caches at the edge — `must-revalidate` lets the browser
+# pick up new deploys quickly while the edge still serves fast.
 /*.js
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=0, must-revalidate
 
 /*.css
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=0, must-revalidate
 
 # HTML always fresh
 /*.html
