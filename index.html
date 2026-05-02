@@ -160,6 +160,11 @@ function updateModelInfo() {
 
   // Habilita/deshabilita checkbox text-only según multimodal
   $('chk-text-only').disabled = !m.multimodal;
+
+  // Actualiza estimación de tamaño total del tracker para que el progreso no diga "3.4 GB" en modelos chicos
+  if (typeof m.expectedTotalGB === 'number') {
+    overall.expectedTotalGB = m.expectedTotalGB;
+  }
 }
 selModel.onchange = updateModelInfo;
 updateModelInfo();
@@ -208,7 +213,7 @@ const overall = {
   startMs: 0,
   files: new Map(),         // file -> { loaded, total, status }
   samples: [],              // { t, bytes } últimos 10s para rolling speed
-  expectedTotalGB: 3.4,     // estimación si transformers.js no reporta total
+  expectedTotalGB: 1.0,     // estimación inicial; se actualiza al seleccionar modelo
 };
 
 function fmtTime(s) {
@@ -355,26 +360,26 @@ function verdict(tps) {
 $('btn-gen').onclick = async () => {
   $('btn-gen').disabled = true;
   $('output').textContent = '';
-  $('gen-stats').textContent = '';
+  $('gen-stats').textContent = ' · generando...';
   const text = $('prompt').value.trim();
   if (!text) { $('btn-gen').disabled = false; return; }
 
   const messages = [{ role: 'user', content: [{ type: 'text', text }] }];
-  let tokens = 0;
-  const t0 = performance.now();
 
   try {
     const r = await runner.generate(messages, {
       maxTokens: 256,
       onToken: (chunk, full) => {
-        tokens++;
         $('output').textContent = full;
       },
     });
-    const tps = (tokens / (r.latencyMs / 1000)).toFixed(2);
-    $('gen-stats').textContent = `${r.latencyMs} ms · ~${tps} tok/s${r.via ? ' · ' + r.via : ''}`;
+    // Usa el conteo real de tokens devuelto por generate(), no chunks del streamer
+    const tps = r.tokensPerSecond ?? '—';
+    const toks = r.tokens ?? '—';
+    $('gen-stats').textContent = ` · ${(r.latencyMs / 1000).toFixed(1)}s · ${toks} tok · ${tps} tok/s${r.via ? ' · ' + r.via : ''}`;
   } catch (e) {
     $('output').textContent = `Error: ${e.message}`;
+    $('gen-stats').textContent = '';
   } finally {
     $('btn-gen').disabled = false;
   }

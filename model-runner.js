@@ -187,7 +187,7 @@ export class ModelRunner {
     };
   }
 
-  async generate(messages, { maxTokens = 256, onToken } = {}) {
+  async generate(messages, { maxTokens = 256, onToken, sampling } = {}) {
     if (this.usingFallback) return this._generateFallback(messages, { maxTokens, onToken });
     if (!this.model) throw new Error('Modelo no cargado');
 
@@ -203,19 +203,36 @@ export class ModelRunner {
       },
     });
 
+    // Params de sampling: prioriza el override del caller, luego el default del modelo
+    const s = sampling ?? this.currentModel?.sampling ?? {
+      temperature: 0.7,
+      top_p: 0.9,
+      top_k: 50,
+    };
+
     const t0 = performance.now();
-    await this.model.generate({
+    const output = await this.model.generate({
       ...inputs,
       max_new_tokens: maxTokens,
       do_sample: true,
-      temperature: 1.0,
-      top_p: 0.95,
-      top_k: 64,
+      temperature: s.temperature,
+      top_p: s.top_p,
+      top_k: s.top_k,
       streamer,
     });
     const ms = performance.now() - t0;
 
-    return { text, latencyMs: Math.round(ms) };
+    // Conteo real de tokens generados (no chunks de texto)
+    const inputLen = inputs.input_ids?.dims?.[1] ?? inputs.input_ids?.length ?? 0;
+    const outputLen = output?.dims?.[1] ?? output?.length ?? 0;
+    const generated = Math.max(0, outputLen - inputLen);
+
+    return {
+      text,
+      latencyMs: Math.round(ms),
+      tokens: generated,
+      tokensPerSecond: +(generated / (ms / 1000)).toFixed(2),
+    };
   }
 
   async _generateFallback(messages, { maxTokens, onToken }) {
