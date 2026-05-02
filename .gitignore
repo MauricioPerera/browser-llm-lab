@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies (none expected, pero por si acaso)
+node_modules/
+.pnpm-store/
+
+# Build artifacts (no hay build step pero por si los agregás)
+dist/
+build/
+.cache/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Cloudflare local dev
+.wrangler/
+.dev.vars
+
+# Claude Code local settings
+.claude/
+
+# OS
+Thumbs.db
+desktop.ini

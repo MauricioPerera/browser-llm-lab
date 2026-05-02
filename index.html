@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemma 4 E2B — Capability Check + Runner</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #14181d; --txt: #e6e9ee; --muted: #8a94a3;
+    --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: var(--bg); color: var(--txt);
+    font: 14px/1.5 ui-monospace, "JetBrains Mono", Consolas, monospace; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  h2 { font-size: 14px; margin: 0 0 8px; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; max-width: 1400px; }
+  .panel { background: var(--panel); border: 1px solid #1f2630; border-radius: 6px; padding: 16px; }
+  .panel.full { grid-column: 1 / -1; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+  button { background: var(--accent); color: #001; border: 0; padding: 8px 14px;
+    font: inherit; font-weight: 600; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.secondary { background: #2a3340; color: var(--txt); }
+  .tier { display: inline-block; padding: 2px 8px; border-radius: 3px; font-weight: 600; font-size: 12px; }
+  .tier.recommended { background: var(--ok); color: #001; }
+  .tier.viable { background: var(--accent); color: #001; }
+  .tier.minimal { background: var(--warn); color: #001; }
+  .tier.unsupported { background: var(--err); color: #fff; }
+  .progress { background: #1f2630; height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0; }
+  .progress > div { background: var(--accent); height: 100%; transition: width .2s; }
+  .file { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 12px; margin: 4px 0; }
+  .log { max-height: 200px; overflow: auto; font-size: 12px; }
+  .metric { display: inline-block; margin-right: 16px; }
+  .metric b { color: var(--ok); }
+  textarea { width: 100%; background: #0b0d10; color: var(--txt); border: 1px solid #2a3340;
+    padding: 8px; font: inherit; border-radius: 4px; resize: vertical; min-height: 60px; }
+  #output { min-height: 120px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>Gemma 4 E2B — diagnóstico + inferencia browser-side</h1>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>1. Capacidad del navegador</h2>
+    <button id="btn-check">Detectar</button>
+    <span id="tier"></span>
+    <pre id="capability-out">Pulsa "Detectar"</pre>
+  </div>
+
+  <div class="panel">
+    <h2>2. Carga del modelo</h2>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;font-size:12px;margin-bottom:10px;">
+      <label>modelo:</label>
+      <select id="sel-model" style="background:#0b0d10;color:var(--txt);border:1px solid #2a3340;padding:4px;font:inherit;"></select>
+      <label>dtype:</label>
+      <select id="sel-dtype" style="background:#0b0d10;color:var(--txt);border:1px solid #2a3340;padding:4px;font:inherit;">
+        <option value="q4f16">q4f16 — pesos 4-bit + activaciones fp16 (default)</option>
+        <option value="q4">q4 — pesos 4-bit + activaciones fp32 (mejor sin fp16 hw)</option>
+        <option value="quantized">quantized — int8 (mejor calidad, más grande)</option>
+        <option value="fp16">fp16 — sin quantización (~7 GB)</option>
+      </select>
+      <label>device:</label>
+      <select id="sel-device" style="background:#0b0d10;color:var(--txt);border:1px solid #2a3340;padding:4px;font:inherit;">
+        <option value="webgpu">webgpu</option>
+        <option value="wasm">wasm (CPU)</option>
+      </select>
+      <label>texto only:</label>
+      <label style="font-weight:normal;">
+        <input type="checkbox" id="chk-text-only">
+        usa dtype más liviano para vision/audio encoders (solo aplica a multimodal)
+      </label>
+    </div>
+    <div id="model-info" style="font-size:11px;color:var(--muted);margin-bottom:10px;"></div>
+    <button id="btn-load" disabled>Cargar modelo</button>
+    <button id="btn-unload" class="secondary" style="display:none;">Liberar memoria</button>
+    <div id="overall" style="margin-top:10px;display:none;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+        <span><b id="ov-pct">0%</b> · <span id="ov-bytes">0 / 0 MB</span></span>
+        <span id="ov-rate">— MB/s · ETA —</span>
+      </div>
+      <div class="progress" style="height:10px;"><div id="ov-bar" style="width:0%"></div></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;" id="ov-elapsed">elapsed —</div>
+    </div>
+    <div id="progress-list" style="margin-top:10px;"></div>
+    <pre id="log" class="log"></pre>
+  </div>
+
+  <div class="panel">
+    <h2>3. Benchmark</h2>
+    <button id="btn-bench" disabled>Ejecutar benchmark (32 tokens)</button>
+    <pre id="bench-out">Carga el modelo primero</pre>
+  </div>
+
+  <div class="panel">
+    <h2>4. Inferencia</h2>
+    <textarea id="prompt" placeholder="Escribe tu prompt...">Explica brevemente qué es WebGPU.</textarea>
+    <div style="margin-top:8px;">
+      <button id="btn-gen" disabled>Generar</button>
+      <span id="gen-stats"></span>
+    </div>
+    <pre id="output"></pre>
+  </div>
+
+  <div class="panel full">
+    <h2>5. Cache — versiones descargadas</h2>
+    <div style="margin-bottom:10px;">
+      <button id="btn-cache-refresh" class="secondary">Refrescar</button>
+      <button id="btn-cache-clear-all" class="secondary" style="background:#5a1f1f;">Borrar TODO el cache</button>
+      <span id="cache-summary" style="margin-left:12px;color:var(--muted);font-size:12px;"></span>
+    </div>
+    <div id="cache-list"><span style="color:var(--muted);">Pulsa "Refrescar" para listar</span></div>
+  </div>
+
+</div>
+
+<script type="module">
+import { checkCapability, formatReport } from './capability.js';
+import { ModelRunner } from './model-runner.js';
+import { listCachedModels, deleteGroup, clearAll, fmtBytes } from './cache-manager.js';
+import { MODELS } from './models-registry.js';
+
+const $ = (id) => document.getElementById(id);
+const log = (msg) => {
+  const el = $('log');
+  el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+};
+
+let report = null;
+let runner = null;
+
+// Poblar selector de modelos
+const selModel = $('sel-model');
+for (const [key, m] of Object.entries(MODELS)) {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = `${m.label} · ${m.sizeNote}`;
+  selModel.appendChild(opt);
+}
+
+function updateModelInfo() {
+  const key = selModel.value;
+  const m = MODELS[key];
+  if (!m) { $('model-info').textContent = ''; return; }
+  const tier = report?.tier ?? 'no detectado';
+  let speedHint = '';
+  if (m.expectedSpeed) {
+    const s = m.expectedSpeed;
+    speedHint = ` · velocidad esperada: gen-11 ~${s['gen-11-igpu']} t/s · Arc 140T ~${s['arc-140t']} t/s · RTX 4070 ~${s['rtx-4070']} t/s`;
+  }
+  $('model-info').textContent = `${m.id} · ${m.multimodal ? 'multimodal' : 'solo texto'}${speedHint}`;
+
+  // Habilita/deshabilita checkbox text-only según multimodal
+  $('chk-text-only').disabled = !m.multimodal;
+}
+selModel.onchange = updateModelInfo;
+updateModelInfo();
+
+// 1. Capability
+$('btn-check').onclick = async () => {
+  $('btn-check').disabled = true;
+  $('capability-out').textContent = 'Detectando...';
+  try {
+    report = await checkCapability({ modelSizeGB: 3.4, minBufferGB: 2 });
+    $('capability-out').textContent = formatReport(report);
+    const tier = $('tier');
+    tier.className = `tier ${report.tier}`;
+    tier.textContent = report.tier;
+    $('btn-load').disabled = !report.supported;
+  } catch (e) {
+    $('capability-out').textContent = `Error: ${e.message}`;
+  } finally {
+    $('btn-check').disabled = false;
+  }
+};
+
+// 2. Load
+const progressMap = new Map();
+function renderProgress() {
+  const list = $('progress-list');
+  list.innerHTML = '';
+  for (const [name, p] of progressMap) {
+    const wrap = document.createElement('div');
+    wrap.className = 'file';
+    const label = document.createElement('div');
+    label.textContent = `${name} ${p.progress?.toFixed?.(0) ?? 0}%`;
+    const bar = document.createElement('div');
+    bar.className = 'progress';
+    const inner = document.createElement('div');
+    inner.style.width = `${p.progress ?? 0}%`;
+    bar.appendChild(inner);
+    wrap.appendChild(label);
+    wrap.appendChild(bar);
+    list.appendChild(wrap);
+  }
+}
+
+// --- Tracker agregado de descarga ---
+const overall = {
+  startMs: 0,
+  files: new Map(),         // file -> { loaded, total, status }
+  samples: [],              // { t, bytes } últimos 10s para rolling speed
+  expectedTotalGB: 3.4,     // estimación si transformers.js no reporta total
+};
+
+function fmtTime(s) {
+  if (!isFinite(s) || s < 0) return '—';
+  if (s < 60) return `${Math.round(s)}s`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return `${m}m ${sec}s`;
+}
+
+function updateOverall(p) {
+  if (!overall.startMs) overall.startMs = performance.now();
+  $('overall').style.display = 'block';
+
+  const key = p.file || p.name;
+  if (key) {
+    const prev = overall.files.get(key) || { loaded: 0, total: 0 };
+    overall.files.set(key, {
+      loaded: p.loaded ?? prev.loaded,
+      total: p.total ?? prev.total,
+      status: p.status,
+    });
+  }
+
+  let loaded = 0, totalKnown = 0;
+  for (const f of overall.files.values()) {
+    loaded += f.loaded || 0;
+    totalKnown += f.total || 0;
+  }
+  // Si aún no conocemos el total real, usa estimación
+  const total = Math.max(totalKnown, overall.expectedTotalGB * 1024 ** 3);
+  const pct = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
+
+  // Velocidad rolling (ventana 5s)
+  const now = performance.now();
+  overall.samples.push({ t: now, bytes: loaded });
+  overall.samples = overall.samples.filter(s => now - s.t <= 5000);
+  let rate = 0;
+  if (overall.samples.length >= 2) {
+    const first = overall.samples[0];
+    const last = overall.samples[overall.samples.length - 1];
+    const dt = (last.t - first.t) / 1000;
+    if (dt > 0) rate = (last.bytes - first.bytes) / dt;  // bytes/s
+  }
+  const remaining = Math.max(0, total - loaded);
+  const eta = rate > 0 ? remaining / rate : Infinity;
+  const elapsed = (now - overall.startMs) / 1000;
+
+  $('ov-pct').textContent = `${pct.toFixed(1)}%`;
+  $('ov-bytes').textContent = `${fmtBytes(loaded)} / ${fmtBytes(total)}${totalKnown < total ? ' (est.)' : ''}`;
+  $('ov-rate').textContent = `${fmtBytes(rate)}/s · ETA ${fmtTime(eta)}`;
+  $('ov-bar').style.width = `${pct}%`;
+  $('ov-elapsed').textContent = `elapsed ${fmtTime(elapsed)} · ${overall.files.size} archivo(s)`;
+}
+
+// filtro: ignora eventos agregados (model_id sin extensión)
+function isFileEvent(p) {
+  const k = p.file || p.name || '';
+  return /\.(onnx|json|bin|txt|model)/i.test(k) || k.includes('/onnx/');
+}
+
+$('btn-load').onclick = async () => {
+  $('btn-load').disabled = true;
+  progressMap.clear();
+  overall.startMs = 0;
+  overall.files.clear();
+  overall.samples.length = 0;
+
+  runner = new ModelRunner({
+    onLog: log,
+    onProgress: (p) => {
+      if (!isFileEvent(p)) return;
+      progressMap.set(p.file || p.name, p);
+      renderProgress();
+      updateOverall(p);
+    },
+    onFallback: (info) => log(`Fallback activado: ${info.reason}`),
+  });
+
+  const modelKey = $('sel-model').value;
+  const dtype = $('sel-dtype').value;
+  const device = $('sel-device').value;
+  const textOnly = $('chk-text-only').checked;
+
+  const result = await runner.load({ modelKey, dtype, device, textOnly });
+
+  if (result.ok) {
+    $('btn-bench').disabled = false;
+    $('btn-gen').disabled = false;
+    $('btn-unload').style.display = 'inline-block';
+    log('Listo para inferencia.');
+  } else {
+    log(`Carga falló: ${result.error?.message}`);
+    $('btn-load').disabled = false;
+  }
+};
+
+$('btn-unload').onclick = async () => {
+  if (!runner) return;
+  await runner.unload();
+  runner = null;
+  $('btn-bench').disabled = true;
+  $('btn-gen').disabled = true;
+  $('btn-unload').style.display = 'none';
+  $('btn-load').disabled = false;
+  $('overall').style.display = 'none';
+  log('Memoria liberada. Puedes recargar con otra config.');
+};
+
+// 3. Benchmark
+$('btn-bench').onclick = async () => {
+  $('btn-bench').disabled = true;
+  $('bench-out').textContent = 'Ejecutando warmup + 32 tokens...';
+  try {
+    const r = await runner.benchmark({ tokens: 32 });
+    if (r.skipped) {
+      $('bench-out').textContent = `(saltado: ${r.reason})`;
+    } else {
+      $('bench-out').textContent = [
+        `Warmup:        ${r.warmupMs} ms`,
+        `TTFT:          ${r.ttftMs} ms`,
+        `Total:         ${r.totalMs} ms`,
+        `Tokens:        ${r.tokens}`,
+        `Velocidad:     ${r.tokensPerSecond} tok/s`,
+        '',
+        `Veredicto: ${verdict(r.tokensPerSecond)}`,
+      ].join('\n');
+    }
+  } catch (e) {
+    $('bench-out').textContent = `Error: ${e.message}`;
+  } finally {
+    $('btn-bench').disabled = false;
+  }
+};
+
+function verdict(tps) {
+  if (tps >= 25) return 'Excelente — uso interactivo fluido';
+  if (tps >= 12) return 'Bueno — uso interactivo aceptable';
+  if (tps >= 5)  return 'Aceptable — uso interactivo lento, ok para queries puntuales';
+  if (tps >= 1)  return 'Lento — usable como batch o queries no interactivas';
+  return 'Muy lento — considera reducir contexto o cambiar de dtype/device';
+}
+
+// 4. Generate
+$('btn-gen').onclick = async () => {
+  $('btn-gen').disabled = true;
+  $('output').textContent = '';
+  $('gen-stats').textContent = '';
+  const text = $('prompt').value.trim();
+  if (!text) { $('btn-gen').disabled = false; return; }
+
+  const messages = [{ role: 'user', content: [{ type: 'text', text }] }];
+  let tokens = 0;
+  const t0 = performance.now();
+
+  try {
+    const r = await runner.generate(messages, {
+      maxTokens: 256,
+      onToken: (chunk, full) => {
+        tokens++;
+        $('output').textContent = full;
+      },
+    });
+    const tps = (tokens / (r.latencyMs / 1000)).toFixed(2);
+    $('gen-stats').textContent = `${r.latencyMs} ms · ~${tps} tok/s${r.via ? ' · ' + r.via : ''}`;
+  } catch (e) {
+    $('output').textContent = `Error: ${e.message}`;
+  } finally {
+    $('btn-gen').disabled = false;
+  }
+};
+
+// 5. Cache management
+async function refreshCache() {
+  $('cache-list').innerHTML = '<span style="color:var(--muted);">Calculando...</span>';
+  $('cache-summary').textContent = '';
+  try {
+    const groups = await listCachedModels({ withSizes: true });
+    if (!groups.length) {
+      $('cache-list').innerHTML = '<span style="color:var(--muted);">No hay nada cacheado</span>';
+      return;
+    }
+    const total = groups.reduce((a, g) => a + g.totalBytes, 0);
+    $('cache-summary').textContent = `${groups.length} grupo(s) · total: ${fmtBytes(total)}`;
+
+    const wrap = document.createElement('div');
+    wrap.style.display = 'grid';
+    wrap.style.gap = '6px';
+    for (const g of groups) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;background:#0b0d10;padding:8px;border-radius:4px;font-size:12px;';
+
+      const label = document.createElement('div');
+      label.innerHTML = `<b>${g.modelId}</b> <span style="color:var(--accent);">[${g.dtype}]</span> <span style="color:var(--muted);">${g.source}</span>`;
+
+      const size = document.createElement('div');
+      size.textContent = fmtBytes(g.totalBytes);
+      size.style.color = 'var(--ok)';
+
+      const fileCount = document.createElement('div');
+      fileCount.textContent = `${g.files.length} archivo(s)`;
+      fileCount.style.color = 'var(--muted)';
+
+      const btn = document.createElement('button');
+      btn.textContent = 'Borrar';
+      btn.style.cssText = 'background:#5a1f1f;color:#fff;padding:4px 10px;font-size:12px;';
+      btn.onclick = async () => {
+        if (!confirm(`Borrar ${g.modelId} [${g.dtype}] (${fmtBytes(g.totalBytes)})?`)) return;
+        btn.disabled = true; btn.textContent = 'Borrando...';
+        const n = await deleteGroup(g);
+        log(`Borrados ${n} archivos de ${g.modelId} [${g.dtype}]`);
+        await refreshCache();
+      };
+
+      row.append(label, fileCount, size, btn);
+      wrap.appendChild(row);
+    }
+    $('cache-list').replaceChildren(wrap);
+  } catch (e) {
+    $('cache-list').innerHTML = `<span style="color:var(--err);">Error: ${e.message}</span>`;
+  }
+}
+
+$('btn-cache-refresh').onclick = refreshCache;
+
+$('btn-cache-clear-all').onclick = async () => {
+  if (!confirm('Borrar TODO el cache (Cache API + OPFS)? Esto incluye cualquier otra app del mismo origen.')) return;
+  $('btn-cache-clear-all').disabled = true;
+  try {
+    const r = await clearAll();
+    log(`Cache borrado: ${r.cacheApiDeleted} caches eliminados, OPFS ${r.opfsDeleted ? 'limpio' : 'sin cambios'}`);
+    await refreshCache();
+  } finally {
+    $('btn-cache-clear-all').disabled = false;
+  }
+};
+</script>
+
+</body>
+</html>

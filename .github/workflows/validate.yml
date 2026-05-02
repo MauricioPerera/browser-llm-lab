@@ -1,0 +1,54 @@
+name: Validate static site
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required files exist
+        run: |
+          set -e
+          for f in index.html capability.js model-runner.js cache-manager.js models-registry.js _headers README.md; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: missing $f"
+              exit 1
+            fi
+            echo "OK: $f"
+          done
+
+      - name: Validate HTML
+        run: |
+          # Check for basic structural integrity
+          grep -q '<!doctype html>' index.html
+          grep -q '<script type="module">' index.html
+          echo "HTML structure OK"
+
+      - name: Validate JS modules syntax
+        run: |
+          # Use Node to check that each module parses
+          for f in capability.js model-runner.js cache-manager.js models-registry.js; do
+            node --check "$f" || (echo "Syntax error in $f" && exit 1)
+            echo "Syntax OK: $f"
+          done
+
+      - name: Validate _headers has COOP/COEP
+        run: |
+          grep -q 'Cross-Origin-Opener-Policy: same-origin' _headers
+          grep -q 'Cross-Origin-Embedder-Policy: require-corp' _headers
+          echo "_headers COOP/COEP OK"
+
+      - name: Check no secrets committed
+        run: |
+          # Falla si encuentra patrones obvios de secretos
+          if grep -rE '(sk-[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|api[_-]?key.{0,5}=.{20,})' --include='*.js' --include='*.html' --include='*.md' .; then
+            echo "ERROR: posible secreto detectado"
+            exit 1
+          fi
+          echo "Sin secretos visibles"
