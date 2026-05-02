@@ -137,6 +137,14 @@ const log = (msg) => {
 let report = null;
 let runner = null;
 
+// --- Tracker agregado de descarga (declarado antes de updateModelInfo que lo usa) ---
+const overall = {
+  startMs: 0,
+  files: new Map(),         // file -> { loaded, total, status }
+  samples: [],              // { t, bytes } últimos 10s para rolling speed
+  expectedTotalGB: 1.0,     // estimación inicial; se actualiza al seleccionar modelo
+};
+
 // Poblar selector de modelos
 const selModel = $('sel-model');
 for (const [key, m] of Object.entries(MODELS)) {
@@ -207,14 +215,6 @@ function renderProgress() {
     list.appendChild(wrap);
   }
 }
-
-// --- Tracker agregado de descarga ---
-const overall = {
-  startMs: 0,
-  files: new Map(),         // file -> { loaded, total, status }
-  samples: [],              // { t, bytes } últimos 10s para rolling speed
-  expectedTotalGB: 1.0,     // estimación inicial; se actualiza al seleccionar modelo
-};
 
 function fmtTime(s) {
   if (!isFinite(s) || s < 0) return '—';
