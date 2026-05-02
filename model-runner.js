@@ -173,8 +173,9 @@ export class ModelRunner {
     });
     const totalMs = performance.now() - t0;
 
-    const inputLen = inputs.input_ids?.dims?.[1] ?? inputs.input_ids?.length ?? 0;
-    const outputLen = output?.dims?.[1] ?? output?.length ?? 0;
+    // Coerce BigInt dims a Number para que la aritmética funcione.
+    const inputLen = Number(inputs.input_ids?.dims?.[1] ?? inputs.input_ids?.length ?? 0);
+    const outputLen = Number(output?.dims?.[1] ?? output?.length ?? 0);
     const generated = Math.max(0, outputLen - inputLen);
 
     return {
@@ -222,9 +223,10 @@ export class ModelRunner {
     });
     const ms = performance.now() - t0;
 
-    // Conteo real de tokens generados (no chunks de texto)
-    const inputLen = inputs.input_ids?.dims?.[1] ?? inputs.input_ids?.length ?? 0;
-    const outputLen = output?.dims?.[1] ?? output?.length ?? 0;
+    // Conteo real de tokens generados (no chunks de texto).
+    // dims puede contener BigInt en versiones nuevas de transformers.js → coerce a Number.
+    const inputLen = Number(inputs.input_ids?.dims?.[1] ?? inputs.input_ids?.length ?? 0);
+    const outputLen = Number(output?.dims?.[1] ?? output?.length ?? 0);
     const generated = Math.max(0, outputLen - inputLen);
 
     return {
